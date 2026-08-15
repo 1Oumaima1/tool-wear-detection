@@ -1,348 +1,607 @@
-# 🛡️ ToolVision — Plateforme de Surveillance Industrielle par IA
+#  ToolVision — AI-Based Tool Wear Detection
 
-**Détection prédictive de l'usure des outils de coupe CNC, par vision par ordinateur.**
+ **Détection intelligente de l'usure des outils industriels par Intelligence Artificielle et Vision par Ordinateur.**
 
-ToolVision surveille une vidéo d'une machine CNC, classifie l'état d'usure
-de l'outil de coupe image par image (**Sharp / Used / Dulled**) grâce à un
-modèle **EfficientNetV2B0** entraîné spécifiquement pour cette tâche, et
-déclenche automatiquement une alerte email dès qu'un outil est confirmé
-usé sur plusieurs détections consécutives — avec historique complet et
-tableau de bord temps réel.
+ToolVision est une plateforme de surveillance industrielle basée sur l'**Intelligence Artificielle** qui analyse une vidéo simulant le flux d'une caméra installée sur une machine CNC.
 
-> 📌 **À propos de la vidéo** : aucune caméra physique n'est branchée à ce
-> projet. La surveillance se fait sur des fichiers `.mp4` pré-enregistrés
-> (déposés dans `backend/videos/`) qui simulent un flux de caméra
-> industrielle. Cette simulation est un choix assumé : la couche
-> d'acquisition vidéo est volontairement découplée du reste du pipeline pour
-> qu'un vrai flux caméra/RTSP puisse être branché plus tard sans toucher à
-> l'IA, à la logique de décision, au stockage ni aux alertes.
+Le système analyse les images de la vidéo **image par image** et utilise un modèle **EfficientNetV2B0** entraîné par **Transfer Learning** pour classifier l'état de l'outil de coupe en trois catégories :
+
+**Sharp · Used · Dulled**
+
+Lorsqu'une usure importante est détectée de manière suffisamment fiable et répétée, le système déclenche automatiquement une **alerte**, tout en conservant l'historique des prédictions et en fournissant une interface de supervision.
+
+ 🎥 **Simulation vidéo**
+ Dans cette version, une vidéo `.mp4` pré-enregistrée est utilisée pour simuler le flux provenant d'une caméra industrielle. Cette approche permet de développer et tester toute la chaîne IA sans nécessiter de caméra physique.
 
 ---
 
 ## 📖 Sommaire
 
-- [Aperçu](#-aperçu)
-- [Dataset](#-dataset)
-- [Modèle IA entraîné](#-modèle-ia-entraîné)
-- [Fonctionnalités](#-fonctionnalités)
-- [Stack technique](#-stack-technique)
-- [Architecture du système](#-architecture-du-système)
-- [Structure du projet](#-structure-du-projet)
-- [Installation](#-installation)
-- [Variables d'environnement](#-variables-denvironnement)
-- [Lancer le projet](#-lancer-le-projet)
-- [Utilisation](#-utilisation)
-- [Documentation complète](#-documentation-complète)
-- [Limites connues](#-limites-connues)
-- [Améliorations futures](#-améliorations-futures)
-- [Licence](#-licence)
+* [ Objectif du projet](#-objectif-du-projet)
+* [ Dataset](#-dataset)
+* [ Modèle IA](#-modèle-ia)
+* [ Pipeline IA](#-pipeline-ia)
+* [ Explainable AI — Grad-CAM](#-explainable-ai--grad-cam)
+* [ Decision Engine](#-decision-engine)
+* [ Fonctionnalités](#-fonctionnalités)
+* [Architecture](#️-architecture)
+* [ Stack technique](#️-stack-technique)
+* [ Structure du projet](#-structure-du-projet)
+* [ Installation](#️-installation)
+* [ Variables d'environnement](#-variables-denvironnement)
+* [ Lancement avec Docker](#-lancement-avec-docker)
+* [ Utilisation](#-utilisation)
+* [ Limites actuelles](#️-limites-actuelles)
+* [ Améliorations futures](#-améliorations-futures)
 
 ---
 
-## 📋 Aperçu
+## 🎯 Objectif du projet
 
-Ce projet part d'un modèle de classification d'images entraîné pour
-distinguer trois états d'usure d'un outil de coupe CNC, et le transforme en
-une **plateforme complète de surveillance industrielle** : backend FastAPI
-qui fait tourner le modèle sur des frames vidéo échantillonnées, moteur de
-décision qui filtre le bruit avant d'alerter, base PostgreSQL pour
-l'historique, et tableau de bord React pour l'opérateur.
+L'objectif de ToolVision est d'utiliser la **Vision par Ordinateur** pour automatiser la surveillance de l'état des outils de coupe utilisés dans les machines CNC.
 
-## 🧠 Dataset
+Le système suit le principe :
 
-Le modèle a été entraîné sur un jeu de données d'images d'outils de coupe
-CNC, réparties en **3 classes** :
+```text
+Vidéo de la machine
+        ↓
+Extraction des frames
+        ↓
+Prétraitement
+        ↓
+Modèle Deep Learning
+        ↓
+Classification de l'usure
+        ↓
+Filtrage des prédictions
+        ↓
+Détection d'une usure confirmée
+        ↓
+Alerte + Historique
+```
 
-| Classe | Signification |
-|---|---|
-| `Sharp` | Outil en bon état, aucune usure visible |
-| `Used` | Usure modérée, outil encore utilisable |
-| `Dulled` | Outil usé, à remplacer |
+---
 
-**Caractéristiques du dataset** :
-- Environ **2 500 images** réparties sur les 3 classes.
-- Images redimensionnées en **224×224×3** avant entraînement (format
-  d'entrée standard d'EfficientNetV2B0).
-- Split entraînement/validation réalisé lors de la phase de préparation des
-  données, avant l'entraînement du modèle.
-- L'analyse exploratoire (distribution des classes, vérification de la
-  qualité des images, détection de doublons/images corrompues) et la
-  préparation (redimensionnement, encodage des labels) ont été faites dans
-  des notebooks Jupyter dédiés (`01_dataset_analysis.ipynb`,
-  `02_data_preparation.ipynb`), conservés comme trace du travail de
-  data science en amont du développement de la plateforme.
+##  Dataset
 
-## 🎯 Modèle IA entraîné
+Le modèle a été entraîné à partir de la **version augmentée du dataset Mudestreda Multimodal Device State Recognition Dataset**, disponible sur Zenodo.
 
-**Architecture** : `EfficientNetV2B0`, utilisé en **transfer learning**
-(poids pré-entraînés réutilisés puis affinés sur le dataset ci-dessus), avec
-une tête de classification adaptée aux 3 classes du projet. Le modèle final
-est sauvegardé au format `.keras` (`final_model.keras`) et chargé tel quel
-par le backend — aucune reconstruction d'architecture au runtime, le fichier
-contient le modèle entraîné complet.
+**📦 Dataset utilisé — Mudestreda / dataset_aug :**
+https://zenodo.org/records/8238653?preview_file=dataset_aug.zip
 
-**Entraînement** : réalisé dans `03_model_training.ipynb`, avec le
-prétraitement suivant appliqué à chaque image avant passage dans le réseau :
-redimensionnement 224×224, normalisation gérée en interne par la couche de
-rescaling d'EfficientNet (voir point ci-dessous).
+Le projet utilise les images d'outils de coupe afin de construire un modèle de classification en **3 classes**.
 
-**Un bug réel rencontré et corrigé pendant le développement** : une
-double normalisation (`/255` manuelle appliquée *en plus* de la
-normalisation déjà intégrée à la première couche du modèle) a fait chuter
-l'accuracy de validation d'environ **89 % à ~34 %** sans qu'aucune erreur ne
-soit levée — le modèle continuait de tourner, juste avec des prédictions
-dégradées. Le correctif a consisté à supprimer la normalisation manuelle
-redondante et à laisser le modèle gérer son propre prétraitement, ce qui a
-restauré les performances d'origine. C'est un exemple concret de bug
-"silencieux" en ML (le pipeline s'exécute sans erreur, mais les résultats
-sont faux) — gardé en mémoire dans le code (`ai_model.py`) pour éviter de le
-réintroduire par erreur.
+### Classes
 
-**Test-Time Augmentation (TTA)** : pour stabiliser les prédictions sur des
-frames vidéo (angle, luminosité, flou de mouvement variables), chaque frame
-est en réalité passée **6 fois** dans le modèle — une fois telle quelle, puis
-5 fois avec une légère augmentation aléatoire (`RandomFlip` horizontal,
-`RandomRotation` ±5°, `RandomZoom` ±5%) — et les 6 sorties softmax sont
-moyennées avant de prendre la classe finale. Ce choix ajoute un peu de
-latence (6 passes au lieu d'1) contre des prédictions plus stables frame à
-frame.
+| Classe   | Signification       | Niveau dans l'application |
+| -------- | ------------------- | ------------------------- |
+| `sharp`  | Outil en bon état   | 🟢 NORMAL                 |
+| `used`   | Usure modérée       | 🟠 WARNING                |
+| `dulled` | Outil fortement usé | 🔴 CRITIQUE               |
 
-**Explicabilité (Grad-CAM)** : bien que non exposé dans les 5 pages actuelles
-du tableau de bord (voir plus bas), le backend expose un endpoint
-`GET /predictions/{id}/gradcam` qui calcule une vraie heatmap Grad-CAM
-(gradients réels sur la dernière couche convolutive, pas une simulation) pour
-visualiser quelles zones de l'image ont influencé la prédiction.
+### Données utilisées
+
+* **Dataset :** Mudestreda
+* **Version :** augmented dataset (`dataset_aug`)
+* **Classes :** 3
+* **Entraînement :** 2 424 images
+* **Validation :** 52 images
+* **Test :** 56 images
+* **Total utilisé :** 2 532 images
+* **Taille d'entrée :** 224 × 224 × 3
+
+### Préparation des données
+
+```text
+Images
+  ↓
+Sélection des images d'outils
+  ↓
+Organisation par classe
+  ↓
+Analyse de la distribution
+  ↓
+Préparation Train / Validation / Test
+  ↓
+Resize 224 × 224
+  ↓
+Entraînement
+```
+
+Les notebooks d'analyse et de préparation sont disponibles dans :
+
+```text
+ai/notebooks/
+├── 01_dataset_analysis.ipynb
+├── 02_data_preparation.ipynb
+├── 03_model_training.ipynb
+└── predict.ipynb
+```
+
+
+
+---
+
+## 🤖 Modèle IA
+
+### EfficientNetV2B0
+
+Le modèle utilisé est **EfficientNetV2B0**, appliqué en **Transfer Learning**.
+
+L'approche consiste à utiliser un réseau pré-entraîné comme base, puis à l'adapter à la tâche spécifique de classification de l'usure des outils.
+
+```text
+Image 224 × 224 × 3
+        ↓
+EfficientNetV2B0
+        ↓
+Extraction des caractéristiques
+        ↓
+Classification Head
+        ↓
+Softmax
+        ↓
+┌────────┬────────┬─────────┐
+│ Sharp  │  Used  │ Dulled  │
+└────────┴────────┴─────────┘
+```
+
+Le modèle entraîné est sauvegardé sous :
+
+```text
+backend/models/final_model.keras
+```
+
+Le fichier `.keras` n'est pas inclus dans GitHub et doit être placé localement avant le lancement du backend.
+
+---
+
+## 🔬 Pipeline IA
+
+ToolVision ne travaille pas directement sur toute la vidéo. Chaque vidéo est transformée en une succession d'images analysées par le modèle.
+
+### 1. Extraction des frames
+
+OpenCV extrait des frames à partir de la vidéo :
+
+```text
+video.mp4
+   ↓
+OpenCV
+   ↓
+Frame 1
+Frame 2
+Frame 3
+...
+```
+
+### 2. Prétraitement
+
+Chaque image est redimensionnée en :
+
+```text
+224 × 224 × 3
+```
+
+avant son passage dans EfficientNetV2B0.
+
+### 3. Classification
+
+Le modèle produit une distribution de probabilités :
+
+```text
+Sharp   → 0.05
+Used    → 0.12
+Dulled  → 0.83
+```
+
+La classe ayant la probabilité la plus élevée devient la prédiction finale.
+
+### 4. Test-Time Augmentation
+
+Pour rendre les prédictions plus robustes sur les frames vidéo, ToolVision utilise le **Test-Time Augmentation (TTA)**.
+
+Une frame peut être analysée plusieurs fois avec de légères transformations :
+
+```text
+                 ┌── Original
+                 ├── Horizontal Flip
+Frame ───────────┼── Rotation
+                 ├── Zoom
+                 ├── ...
+                 └── ...
+                       ↓
+                EfficientNetV2B0
+                       ↓
+               Moyenne des sorties
+                       ↓
+                 Classe finale
+```
+
+Dans la configuration actuelle, une frame est évaluée **6 fois** puis les résultats sont moyennés.
+
+Le TTA permet de rendre les prédictions plus stables face aux variations de :
+
+* luminosité
+* orientation
+* position
+* flou
+* mouvement
+
+---
+
+## 🔎 Explainable AI — Grad-CAM
+
+ToolVision intègre **Grad-CAM** afin de visualiser les régions de l'image ayant contribué à la prédiction du modèle.
+
+Le backend peut générer une **heatmap Grad-CAM** associée à une prédiction.
+
+Cela permet notamment de répondre à la question :
+
+ **« Quelle partie de l'outil a influencé la décision du modèle ? »**
+
+Cette fonctionnalité est disponible côté backend et pourra être intégrée ultérieurement dans l'interface utilisateur.
+
+---
+
+## 🚨 Decision Engine
+
+Une seule prédiction `dulled` ne déclenche pas immédiatement une alerte.
+
+Le système utilise un **moteur de décision** afin d'éviter les fausses alertes provoquées par une mauvaise classification ponctuelle.
+
+Une alerte est déclenchée lorsque les conditions suivantes sont réunies :
+
+```text
+Prediction = DULLED
+        +
+Confidence ≥ 75 %
+        +
+3 détections consécutives
+        +
+Aucune alerte active
+        ↓
+      🚨 ALERTE
+```
+
+Cette logique permet de prendre une décision à partir d'une **séquence de prédictions** plutôt que d'une seule image.
+
+---
 
 ## ✨ Fonctionnalités
 
-Le tableau de bord actuel (React) expose **5 pages** :
+### 📊 Dashboard
 
-| Page | Rôle |
-|---|---|
-| **Login** | Authentification JWT |
-| **Dashboard** | KPIs du jour, dernière détection, courbe d'évolution de l'usure, répartition des classes, dernières alertes |
-| **Live Monitoring** | Lecture de la vidéo sélectionnée + déclenchement automatique et répété de l'analyse IA sur cette vidéo, overlay de détection en direct |
-| **Alerts** | Liste filtrable des alertes (toutes / critiques / warnings), résolution, statut d'envoi email |
-| **History** | Historique complet des inspections, filtre par date/classe, export CSV |
+* KPIs du jour
+* Dernière détection
+* Évolution de l'état d'usure
+* Répartition des classes
+* Dernières alertes
 
-**Machine et outil uniques** : la plateforme est volontairement simplifiée à
-**une seule machine** (`CAM-01`) et **un seul outil** (`TOOL-01`),
-provisionnés automatiquement au démarrage du backend — aucune création
-manuelle requise via Swagger.
+### 🎥 Live Monitoring
 
-**Sous le capot, le backend expose aussi** (accessible via Swagger
-`/docs`, non branché à une page dédiée dans l'UI actuelle) : génération de
-rapports PDF (daily/weekly/monthly), Grad-CAM à la demande, gestion complète
-multi-machines/outils (CRUD), et configuration des seuils du moteur de
-décision — des fondations gardées pour une évolution future du frontend sans
-retravailler le backend.
+* Sélection d'une vidéo `.mp4`
+* Lecture de la vidéo
+* Analyse IA automatique et répétée
+* Affichage des résultats de classification
+* Suivi de l'évolution des prédictions
 
-**Moteur de décision** : une alerte n'est créée que si **toutes** ces
-conditions sont réunies — prédiction `Dulled`, confiance ≥ seuil configurable
-(défaut 75%), **N détections consécutives** au-dessus du seuil (défaut 3), et
-aucune alerte déjà active pour cet outil. Ce filtrage évite le bruit d'une
-seule frame mal classée.
+ La vidéo joue ici le rôle d'une **caméra industrielle simulée**.
 
-## 🛠 Stack technique
+### 🚨 Alerts
 
-**Backend** : FastAPI · SQLAlchemy · PostgreSQL · Pydantic · python-jose (JWT)
-· passlib/bcrypt · TensorFlow/Keras · OpenCV · ReportLab · Matplotlib · Uvicorn
+* Consultation des alertes
+* Filtrage par niveau
+* Distinction des niveaux de sévérité
+* Statut d'envoi email
+* Résolution des alertes
 
-**Frontend** : React 18 · Vite · Tailwind CSS · React Router · Axios ·
-Recharts · react-icons
+### 📜 History
 
-**IA** : EfficientNetV2B0 (transfer learning) · Test-Time Augmentation ·
-Grad-CAM
+* Historique des inspections
+* Classes détectées
+* Niveaux de confiance
+* Dates d'inspection
+* Export CSV
 
-**Infra** : Docker · Docker Compose · Nginx
+### 🔐 Authentication
 
-## 🏗 Architecture du système
+L'application utilise une authentification basée sur **JWT** pour sécuriser l'accès au dashboard.
 
+---
+
+## 🏗️ Architecture
+
+```text
+                    ┌─────────────────────┐
+                    │    Vidéo .mp4       │
+                    │  Caméra simulée      │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │       OpenCV        │
+                    │ Extraction Frames   │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │   Prétraitement     │
+                    │    224 × 224        │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │   EfficientNetV2B0  │
+                    │       + TTA         │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                  ┌──────────────────────────┐
+                  │ Sharp / Used / Dulled    │
+                  │ + Confidence             │
+                  └────────────┬─────────────┘
+                               │
+                 ┌─────────────┴─────────────┐
+                 ▼                           ▼
+        ┌─────────────────┐        ┌──────────────────┐
+        │   PostgreSQL    │        │ Decision Engine  │
+        │   Historique    │        │ Seuil + séquence │
+        └─────────────────┘        └────────┬─────────┘
+                                            │
+                                            ▼
+                                   ┌─────────────────┐
+                                   │   🚨 Alert      │
+                                   │   Email SMTP    │
+                                   └─────────────────┘
+
+                         ┌─────────────────────┐
+                         │   React Dashboard   │
+                         │ Dashboard / Monitor │
+                         │ Alerts / History    │
+                         └─────────────────────┘
 ```
-Vidéo simulée (.mp4, backend/videos/)
-        │
-        ▼
-OpenCV — extraction de frames échantillonnées
-        │
-        ▼
-Prétraitement (resize 224×224)
-        │
-        ▼
-EfficientNetV2B0 + TTA (6 passes moyennées)
-        │
-        ▼
-Prédiction { Sharp | Used | Dulled, confiance }
-        │
-        ├──────────────► PostgreSQL (historique — chaque frame est enregistrée)
-        │
-        ▼
-Moteur de décision (seuil + détections consécutives)
-        │
-        ├─── conditions non réunies ──► fin (juste stocké)
-        │
-        └─── conditions réunies ──► Alert créée ──► Email SMTP
-        │
-        ▼
-Dashboard React (lecture des données stockées, pas de logique métier côté frontend)
-```
 
-Diagramme détaillé, diagrammes UML (cas d'usage, classes, séquence,
-activité, composants, déploiement, paquetages) : voir
-[`docs/`](docs/).
+---
+
+🛠️ Stack technique
+
+🧠 Intelligence Artificielle
+
+<p>
+  <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/TensorFlow-FF6F00?style=for-the-badge&logo=tensorflow&logoColor=white" alt="TensorFlow">
+  <img src="https://img.shields.io/badge/Keras-D00000?style=for-the-badge&logo=keras&logoColor=white" alt="Keras">
+  <img src="https://img.shields.io/badge/EfficientNetV2B0-8E44AD?style=for-the-badge" alt="EfficientNetV2B0">
+  <img src="https://img.shields.io/badge/Transfer_Learning-6C5CE7?style=for-the-badge" alt="Transfer Learning">
+  <img src="https://img.shields.io/badge/TTA-9B59B6?style=for-the-badge" alt="Test-Time Augmentation">
+  <img src="https://img.shields.io/badge/Grad--CAM-E74C3C?style=for-the-badge" alt="Grad-CAM">
+  <img src="https://img.shields.io/badge/OpenCV-5C3EE8?style=for-the-badge&logo=opencv&logoColor=white" alt="OpenCV">
+</p>
+
+Technologies utilisées pour l'analyse des images, l'entraînement du modèle de
+classification et l'interprétation des prédictions.
+
+⚙️ Backend
+
+<p>
+  <img src="https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white" alt="FastAPI">
+  <img src="https://img.shields.io/badge/SQLAlchemy-D71F00?style=for-the-badge&logo=sqlalchemy&logoColor=white" alt="SQLAlchemy">
+  <img src="https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL">
+  <img src="https://img.shields.io/badge/Pydantic-E92063?style=for-the-badge" alt="Pydantic">
+  <img src="https://img.shields.io/badge/JWT-000000?style=for-the-badge&logo=jsonwebtokens&logoColor=white" alt="JWT">
+  <img src="https://img.shields.io/badge/SMTP-4A90E2?style=for-the-badge&logo=gmail&logoColor=white" alt="SMTP">
+</p>
+
+Le backend assure l'API, l'authentification, la persistance des données,
+le traitement vidéo et la gestion des alertes.
+
+💻 Frontend
+
+<p>
+  <img src="https://img.shields.io/badge/React_18-61DAFB?style=for-the-badge&logo=react&logoColor=black" alt="React 18">
+  <img src="https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white" alt="Vite">
+  <img src="https://img.shields.io/badge/Tailwind_CSS-06B6D4?style=for-the-badge&logo=tailwindcss&logoColor=white" alt="Tailwind CSS">
+  <img src="https://img.shields.io/badge/React_Router-CA4245?style=for-the-badge&logo=reactrouter&logoColor=white" alt="React Router">
+  <img src="https://img.shields.io/badge/Axios-5A29E4?style=for-the-badge&logo=axios&logoColor=white" alt="Axios">
+  <img src="https://img.shields.io/badge/Recharts-22A699?style=for-the-badge" alt="Recharts">
+</p>
+
+Interface web de supervision permettant de visualiser les détections,
+les alertes, l'historique et le monitoring vidéo.
+
+🐳 Infrastructure
+
+<p>
+  <img src="https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker">
+  <img src="https://img.shields.io/badge/Docker_Compose-2496ED?style=for-the-badge&logo=docker&logoColor=white" alt="Docker Compose">
+  <img src="https://img.shields.io/badge/Nginx-009639?style=for-the-badge&logo=nginx&logoColor=white" alt="Nginx">
+</p>
+
+Conteneurisation et déploiement des différents services de la plateforme.
+
+Stack IA au cœur du projet : Python + TensorFlow/Keras + EfficientNetV2B0
+
+OpenCV, complétée par TTA et Grad-CAM pour améliorer la robustesse et
+l'explicabilité des prédictions.
 
 ## 📁 Structure du projet
 
-```
+```text
 tool-wear-detection/
-├── .env.example
-├── .gitignore
-├── .venv/
+│
 ├── ai/
 │   ├── notebooks/
-│   └── scripts/
+│   │   ├── 01_dataset_analysis.ipynb
+│   │   ├── 02_data_preparation.ipynb
+│   │   ├── 03_model_training.ipynb
+│   │   └── predict.ipynb
+│   
+│   
+│
 ├── backend/
 │   ├── app/
 │   │   ├── api/
-│   │   │   └── routes/
 │   │   ├── core/
 │   │   ├── models/
 │   │   ├── schemas/
 │   │   ├── services/
 │   │   └── static/
-│   │       ├── frames/
-│   │       └── gradcam/
+│   │
 │   ├── models/
-│   ├── reports/
+│   │   └── final_model.keras
+│   │
 │   └── videos/
-├── dataset/
-├── docker-compose.yml
+│       └── *.mp4
+│
 ├── frontend/
 │   └── src/
 │       ├── api/
-│       ├── assets/
 │       ├── components/
-│       │   ├── layout/
-│       │   └── ui/
 │       ├── context/
 │       ├── pages/
 │       └── utils/
-├── models/
-├── README.md
-└── requirements.txt
+│
+├── docker-compose.yml
+├── requirements.txt
+└── README.md
+```
+
+---
 
 ## ⚙️ Installation
 
 ```bash
-git clone <url-du-repo>
-cd agatronic-platform
+git clone https://github.com/1Oumaima1/tool-wear-detection.git
+cd tool-wear-detection
 ```
 
-Prérequis avant de démarrer :
-- Ton modèle entraîné → `backend/models/final_model.keras`
-- Au moins une vidéo de simulation → `backend/videos/`
+### Prérequis
 
-## 🔑 Variables d'environnement
+Avant de lancer l'application :
+
+```text
+backend/models/final_model.keras
+backend/videos/*.mp4
+```
+
+Le modèle entraîné doit être placé dans `backend/models/`.
+
+Une vidéo `.mp4` doit être placée dans `backend/videos/`.
+
+---
+
+## 🔐 Variables d'environnement
+
+### Backend
 
 ```bash
+cd backend
 cp .env.example .env
 ```
 
-Principales variables (voir `.env.example` pour la liste complète) :
 
-| Variable | Rôle |
-|---|---|
-| `DATABASE_URL` | Connexion PostgreSQL |
-| `JWT_SECRET_KEY` | Clé de signature des tokens — à changer avant tout déploiement réel |
-| `MODEL_PATH` | Chemin vers `final_model.keras` |
-| `VIDEO_FOLDER` | Dossier des vidéos de simulation |
-| `DEFAULT_CONFIDENCE_THRESHOLD` / `DEFAULT_CONSECUTIVE_DETECTIONS` | Réglages du moteur de décision |
-| `SMTP_HOST` / `SMTP_USER` / `SMTP_PASSWORD` / `ALERT_EMAIL_TO` | Envoi des emails d'alerte |
 
-## 🐳 Lancer le projet
+Principales variables :
 
-**Avec Docker (recommandé)** :
+| Variable                         | Description                      |
+| -------------------------------- | -------------------------------- |
+| `DATABASE_URL`                   | Connexion PostgreSQL             |
+| `JWT_SECRET_KEY`                 | Clé de signature JWT             |
+| `MODEL_PATH`                     | Chemin du modèle IA              |
+| `VIDEO_FOLDER`                   | Dossier contenant les vidéos     |
+| `DEFAULT_CONFIDENCE_THRESHOLD`   | Seuil de confiance               |
+| `DEFAULT_CONSECUTIVE_DETECTIONS` | Nombre de détections nécessaires |
+| `SMTP_HOST`                      | Serveur SMTP                     |
+| `SMTP_USER`                      | Compte SMTP                      |
+| `SMTP_PASSWORD`                  | Mot de passe SMTP                |
+| `ALERT_EMAIL_TO`                 | Adresse de réception des alertes |
+| `VITE_API_BASE_URL`              | URL de l'API backend             |
+
+---
+
+## 🐳 Lancement avec Docker
+
 ```bash
 docker compose up --build -d
 ```
-- Frontend → http://localhost:3000
-- Backend / Swagger → http://localhost:8000/docs
 
-**Sans Docker (développement)** :
-```bash
-# Backend
-cd backend
-python -m venv venv && source venv/bin/activate
-pip install -r ../requirements.txt
-uvicorn app.main:app --reload --port 8000
+Services :
 
-# Frontend (autre terminal)
-cd frontend
-npm install
-npm run dev
+```text
+Frontend
+http://localhost:3000
+
+Backend / Swagger
+http://localhost:8000/docs
 ```
 
-### Premier compte
-
-Aucun utilisateur n'existe par défaut. Créer le premier admin :
-```bash
-docker compose exec backend python -c "
-from app.database import SessionLocal
-from app.models.user import User, UserRole
-from app.core.security import hash_password
-db = SessionLocal()
-db.add(User(username='admin', email='admin@toolguard.ai',
-             hashed_password=hash_password('ChangeMe123!'), role=UserRole.admin))
-db.commit()
-"
-```
+---
 
 ## 🚀 Utilisation
 
-1. Se connecter sur `/login`.
-2. Aller sur **Live Monitoring** : la vidéo déposée dans `backend/videos/`
-   apparaît dans le sélecteur de source, se lit automatiquement, et
-   l'analyse IA se relance en boucle sur cette vidéo toutes les ~8 secondes.
-3. Consulter **Dashboard** pour la vue d'ensemble du jour.
-4. Consulter **Alerts** pour voir/résoudre les alertes déclenchées.
-5. Consulter **History** pour l'historique complet et l'export CSV.
+### 1. Connexion
 
-## 📚 Documentation complète
+Se connecter à l'application avec un compte utilisateur.
 
-Le dossier [`docs/`](docs/) contient une documentation détaillée pensée
-aussi bien pour un usage technique que pour un rapport de stage :
+### 2. Live Monitoring
 
-- `docs/API.md` — chaque endpoint, requête/réponse
-- `docs/DATABASE.md` — les 8 tables, colonnes, relations
-- `docs/AI_PIPELINE.md` — dataset, modèle, TTA, moteur de décision, Grad-CAM
-- `docs/WORKFLOW.md` — flux complet d'une requête `process-video`
-- `docs/REPORTS.md` — contenu exact des rapports PDF
-- `docs/DEPLOYMENT.md` — Docker, volumes, variables, limites de prod
-- `docs/uml/*.puml` — 7 diagrammes UML (source PlantUML)
-- `docs/assets/` — diagrammes rendus (PNG/SVG)
+Accéder à **Live Monitoring** et sélectionner une vidéo disponible.
 
-## ⚠️ Limites connues
+Le système exécute automatiquement :
 
-- **Traitement vidéo synchrone** : `process-video` bloque le temps de tout
-  traiter — pas de file d'attente en arrière-plan pour l'instant.
-- **Pas de vraie caméra** : uniquement des fichiers `.mp4` pré-enregistrés,
-  par design (voir note en haut de ce README).
-- **Fichiers statiques non authentifiés** : les images de frames/Grad-CAM
-  servies sous `/static/` ne sont pas protégées par JWT.
-- **Pas de migrations Alembic** : le schéma est créé une fois via
-  `create_all()`, sans gestion de migration incrémentale.
-- **Frontend limité à 5 pages** : Reports, Explainable AI (Grad-CAM),
-  gestion multi-machines et réglages avancés existent côté backend mais
-  n'ont pas (encore) d'interface dédiée dans le tableau de bord actuel.
+```text
+Vidéo
+  ↓
+Frames
+  ↓
+Prétraitement
+  ↓
+EfficientNetV2B0 + TTA
+  ↓
+Prédiction
+  ↓
+Decision Engine
+  ↓
+Alerte éventuelle
+```
+
+### 3. Dashboard
+
+Consulter les indicateurs et l'évolution des détections.
+
+### 4. Alerts
+
+Consulter les alertes générées par le système.
+
+### 5. History
+
+Consulter l'historique des inspections et exporter les données en CSV.
+
+---
+
+## ⚠️ Limites actuelles
+
+* La caméra industrielle est actuellement **simulée par des vidéos `.mp4`**.
+* Le traitement vidéo est actuellement effectué de manière synchrone.
+* L'interface Grad-CAM n'est pas encore intégrée au dashboard principal.
+* Le système actuel est configuré autour d'une machine et d'un outil par défaut.
+* Les migrations de base de données avec Alembic ne sont pas encore mises en place.
+
+---
 
 ## 🔮 Améliorations futures
 
-- Interface dédiée pour les rapports PDF et le Grad-CAM (déjà fonctionnels côté API)
-- Ingestion caméra live (RTSP/webcam) en complément des vidéos simulées
-- File d'attente asynchrone pour le traitement vidéo
-- Migrations Alembic
-- URLs signées/authentifiées pour les fichiers statiques
+* 🎥 Support des flux caméra **RTSP / caméra industrielle réelle**
+* 🔎 Interface Grad-CAM dans le dashboard
+* 🏭 Gestion avancée de plusieurs machines et outils
+* ⚡ Traitement vidéo asynchrone
+* 🗃️ Migrations Alembic
+* 🔐 Sécurisation avancée des fichiers statiques
+* 📊 Amélioration des analytics et indicateurs industriels
 
 
-formelle choisie pour l'instant — à ajouter (MIT, Apache-2.0, ou la licence
-préférée de ton établissement) avant toute utilisation publique ou
-commerciale.
+---
+
+## 👩‍💻 Amlou Oumaima
+
