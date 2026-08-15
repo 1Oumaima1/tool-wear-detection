@@ -17,7 +17,7 @@ from app.services.ai_model import ai_model_service
 
 from app.api.routes import auth, machines, predictions, alerts, settings_routes, dashboard
 from app.api.routes import monitoring  # Phase 2 : vidéo + inférence + decision engine
-from app.api.routes import reports  # Phase 6 : rapports PDF
+
 
 logging.basicConfig(
     level=logging.INFO if not settings.DEBUG else logging.DEBUG,
@@ -119,7 +119,7 @@ app.include_router(alerts.router, prefix=API_PREFIX)
 app.include_router(settings_routes.router, prefix=API_PREFIX)
 app.include_router(dashboard.router, prefix=API_PREFIX)
 app.include_router(monitoring.router, prefix=API_PREFIX)
-app.include_router(reports.router, prefix=API_PREFIX)
+
 
 # Sert les frames originales et heatmaps Grad-CAM (Phase 5) + futurs PDF statiques
 STATIC_DIR = Path(__file__).resolve().parent / "static"
