@@ -132,3 +132,19 @@ websocket-client==1.9.0
 wheel==0.47.0
 widgetsnbextension==4.0.15
 wrapt==2.2.2
+
+# Backend / API — appended for the FastAPI platform (Phases 1-7)
+
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+sqlalchemy==2.0.35
+psycopg2-binary==2.9.10
+pydantic==2.9.2
+pydantic-settings==2.5.2
+python-jose[cryptography]==3.3.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
+python-multipart==0.0.9
+email-validator==2.2.0
+python-dotenv==1.0.1
+reportlab==4.2.2
